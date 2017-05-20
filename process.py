@@ -1,9 +1,7 @@
 import sys
 from sdcar.vehicle.vehicle_detection import VehicleDetectionPipeline
-import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
-import glob
 import cv2
 
 # process arguments
