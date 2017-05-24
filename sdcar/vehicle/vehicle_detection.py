@@ -12,8 +12,9 @@ from sklearn.svm import LinearSVC
 from sklearn.svm import SVC
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
-from scipy.ndimage.measurements import label
-
+from scipy.ndimage.measurements import label, center_of_mass, find_objects
+from scipy.spatial.distance import cdist
+from collections import deque
 
 def _color_hist(img, nbins=32, bins_range=(0, 256)):
     """
@@ -172,11 +173,106 @@ class VehicleDetectionClassifier():
         # Return data_dict
         return data_dict
     
+class VehicleBox():
+    def __init__(self, N, position, size):
+        """ Once a vehicle appears in N frames becomes eligible"""
+        self.threshold = N/2
+        self.positions = deque([], maxlen=N)
+        self.sizes = deque([], maxlen=N)
+        self.positions.append(position)
+        self.sizes.append(size)
+    
+    def computation_possible(self):
+        return (len(self.positions) >= self.threshold)
+
+    def distance(self, new_point, cur_point = None):
+        if cur_point is None:
+            cur_point = self.average_position()
+        distance = cdist(np.array([cur_point]).astype(np.uint32), np.array([new_point]).astype(np.uint32))
+        return distance
+
+    def average_position(self):
+        if len(self.positions) == 0:
+            return None
+        position = np.mean(self.positions, axis=0)
+        return position
+    
+    def average_size(self):
+        if len(self.sizes) == 0:
+            return None
+        size = np.mean(self.sizes, axis=0)
+        return size
+
+    def add(self, positions, sizes):
+        # find a position closest to this vehicle
+        # self.positions.put(position)
+        # self.sizes.put(sizes)
+        cur_position = self.average_position()
+        # print(cur_position)
+        templist = [(x, y, self.distance(x, cur_point=cur_position)) for x, y in zip(positions, sizes)]
+        if len(templist) == 0:
+            return None
+
+        minimum_dist = min(templist, key=lambda x: x[2])
+        # print(minimum_dist)
+        if minimum_dist[1][0] < 96:
+            similarity_pixels = 50
+        else:
+            similarity_pixels = 100
+
+        if minimum_dist[2] < similarity_pixels:
+            self.positions.append(minimum_dist[0])
+            self.sizes.append(minimum_dist[1])
+        else:
+            self.positions.popleft()
+            self.sizes.popleft()
+        return minimum_dist[0], minimum_dist[1]
+
+    def get_box(self):
+        # calculate box from positions and sizes
+        position = np.int32(self.average_position())
+        size = np.int32(self.average_size())
+        length_2 = np.int32(size[0]/2)
+        width_2 = np.int32(size[1]/2)
+        return (((position[1] - width_2, position[0] - length_2), (position[1] + width_2, position[0] + length_2)), self.computation_possible())
+
+
+class DetectedVehiclesTracker():
+    def __init__(self, tracking_frames=6):
+        self.vehicles = []
+        self.tracking_frames = tracking_frames
+
+    def add_new_detections(self, positions, boxes, objects):
+        # print(objects)
+        if len(positions) == 0:
+            return
+
+        sizes = [ (abs(obj[0].start - obj[0].stop), abs(obj[1].start - obj[1].stop)) for obj in objects ]
+        for vehicle in self.vehicles:
+            retval = vehicle.add(positions, sizes)
+            if retval is None:
+                continue
+            pos = retval[0]
+            size = retval[1]
+            positions.remove(pos)
+            sizes.remove(size)
+
+        for pos, size in zip(positions, sizes):
+            self.vehicles.append(VehicleBox(self.tracking_frames, pos, size))
+
+    def get_boxes(self):
+        self.vehicles = [ x for x in self.vehicles if len(x.positions) > 0 ]
+        boxes = [ x.get_box() for x in self.vehicles ]
+        # print(boxes)
+        boxes = [ box[0] for box in boxes if box[1] is True ]
+        return boxes
+
 
 class VehicleDetectionPipeline():
     """This class is used to detect other cars on the road"""
-    def __init__(self, clf):
+    def __init__(self, clf, tracking_frames=6):
         self.clf = clf
+        self.tracker = DetectedVehiclesTracker(tracking_frames=tracking_frames)
         
     def draw_boxes(self, img, bboxes, color=(0, 0, 255), thick=6):
         # Make a copy of the image
@@ -204,8 +300,8 @@ class VehicleDetectionPipeline():
 
         # Initialize a list to append window positions to
         window_list = []
-        for x in range(xboundary[0],xboundary[1],xy_pixels[0]):
-            for y in range(yboundary[0],yboundary[1],xy_pixels[1]):
+        for x in range(xboundary[0], xboundary[1], xy_pixels[0]):
+            for y in range(yboundary[0], yboundary[1], xy_pixels[1]):
                 top_left = (x, y)
                 bottom_right = ((x+xy_window[0]),(y + xy_window[1]))
                 window_list.append((top_left, bottom_right))
@@ -240,20 +336,42 @@ class VehicleDetectionPipeline():
         # Return thresholded map
         return heatmap
 
-    def draw_labeled_bboxes(self, img, labels):
+    def draw_labeled_bboxes(self, img, bboxes, color=(0,0,255)):
         # Iterate through all detected cars
+        for bbox in bboxes:
+            # # Find pixels with each car_number label value
+            # nonzero = (labels[0] == car_number).nonzero()
+            # # Identify x and y values of those pixels
+            # nonzeroy = np.array(nonzero[0])
+            # nonzerox = np.array(nonzero[1])
+            # # Define a bounding box based on min/max x and y
+            # bbox = ((np.min(nonzerox), np.min(nonzeroy)), (np.max(nonzerox), np.max(nonzeroy)))
+            # Draw the box on the image
+            cv2.rectangle(img, bbox[0], bbox[1], color, 6)
+
+        # Return the image
+        return img
+
+    def track_labels(self, heatmap, labels):
+        # find center of mass of labels
+        objs = find_objects(labels[0])
+        boxes = []
+        positions = []
         for car_number in range(1, labels[1]+1):
             # Find pixels with each car_number label value
             nonzero = (labels[0] == car_number).nonzero()
+            position = center_of_mass((labels[0] == car_number), labels=[car_number])
             # Identify x and y values of those pixels
             nonzeroy = np.array(nonzero[0])
             nonzerox = np.array(nonzero[1])
             # Define a bounding box based on min/max x and y
             bbox = ((np.min(nonzerox), np.min(nonzeroy)), (np.max(nonzerox), np.max(nonzeroy)))
-            # Draw the box on the image
-            cv2.rectangle(img, bbox[0], bbox[1], (0, 0, 255), 6)
-        # Return the image
-        return img
+            boxes.append(bbox)
+            positions.append(position)
+
+        self.tracker.add_new_detections(positions, boxes, objs)
+
+        return positions, objs, boxes
 
 
     def run(self, img, debug=False, save_output=None):
@@ -277,7 +395,6 @@ class VehicleDetectionPipeline():
                 overlap = (0,0)
             else:
                 overlap = (0.5, 0.5)
-
             windows_perscale = self.slide_window(img, xboundary=[0, 1280], yboundary=yboundary,
                         xy_window=(pixels, pixels), xy_overlap=overlap)
             windows += windows_perscale
@@ -292,7 +409,7 @@ class VehicleDetectionPipeline():
         hot_windows = self.search_windows(img, windows)
         heat = np.zeros_like(img[:, :, 0]).astype(np.float)
         heat = self.add_heat(heat, hot_windows)
-        
+
         # apply threshold
         heat = self.apply_threshold(heat, 1)
         heatmap = np.clip(heat, 0, 255)
@@ -303,8 +420,17 @@ class VehicleDetectionPipeline():
 
         # Find final boxes from heatmap using label function
         labels = label(heatmap)
-        final_img = self.draw_labeled_bboxes(np.copy(img), labels)
-
+        positions, objs, boxes = self.track_labels(heatmap, labels)
+        bboxes = self.tracker.get_boxes()
+        if debug is True:
+            print(positions)
+            print("Boxes:", boxes)
+            print("Tracked:", bboxes)
+            print(objs)
+            print(labels)
+        
+        final_img = self.draw_labeled_bboxes(np.copy(img), bboxes)
+        # final_img = self.draw_labeled_bboxes(np.copy(final_img), bboxes, color=(255,0,0))
         # create heat map
         if debug is True:
             plt.imshow(final_img)
@@ -340,12 +466,11 @@ if __name__ == "__main__":
         classifier.train(vehicles, nonvehicles, overwrite=True)
 
     # print(save_output_dir)
-    pipeline = VehicleDetectionPipeline(classifier)
+    pipeline = VehicleDetectionPipeline(classifier, tracking_frames = 2)
 
     # img = mpimg.imread("../../vehicles/GTI_Far/image0069.png")*255.0
     # print(img)
     fnames = fnames[0:5]
     for fname in fnames:
         img = mpimg.imread(fname)
-        print(img)
         pipeline.run(img, debug=debug, save_output=save_output_dir)
