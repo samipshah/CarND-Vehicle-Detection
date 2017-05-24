@@ -21,6 +21,7 @@ def _color_hist(img, nbins=32, bins_range=(0, 256)):
     takes in image bins and bins range and outputs individual channel histogram 
     and also combined histogram feature
     """
+    # img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
     # Compute the histogram of the RGB channels separately
     rhist = np.histogram(img[:, :, 0], bins=nbins, range=bins_range)
     ghist = np.histogram(img[:, :, 1], bins=nbins, range=bins_range)
@@ -35,6 +36,7 @@ def _color_hist(img, nbins=32, bins_range=(0, 256)):
 
 def _bin_spatial(img, color_space=None, size=(32, 32)):
     """ convert image to new color spave and """
+    # img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
     # Convert image to new color space (if specified)
     # Use cv2.resize().ravel() to create the feature vector
     if color_space is not None:
@@ -45,34 +47,36 @@ def _bin_spatial(img, color_space=None, size=(32, 32)):
     return features
 
 def _get_hog_features(img, orient=9, pix_per_cell=8, cell_per_block=2, vis=False, feature_vec=True, debug=False):
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    # img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
     if vis is False:
         vis = debug
 
-    if vis == True:
-        features, hog_image = hog(img, \
+    hog_features = []
+    for channel in range(img.shape[2]):
+        feature_tuple = hog(img[:,:,channel], \
             orientations=orient, \
             pixels_per_cell=(pix_per_cell, pix_per_cell), \
             cells_per_block=(cell_per_block, cell_per_block), \
-            visualise=True, \
+            visualise=vis, \
             feature_vector=False)
+        
+        if vis is True:
+            features = feature_tuple[0]
+            hog_image = feature_tuple[1]
+        else:
+            features = feature_tuple
+
         if debug is True:
             plt.imshow(hog_image, cmap='gray')
             plt.title('hog image')
             plt.show()
-        return features.ravel()
-    else:
-        features = hog(img, \
-            orientations=orient, \
-            pixels_per_cell=(pix_per_cell, pix_per_cell), \
-            cells_per_block=(cell_per_block, cell_per_block), \
-            visualise=False, \
-            feature_vector=False)
-        return features.ravel()
+
+        hog_features.append(features)
+    return features.ravel()
 
 class VehicleDetectionClassifier():
     def __init__(self, force=False):
-        self.epochs = 10
+        self.epochs = 10 
         self.X_scaler = None
         self.scaler_file = "./img_scaler.pkl"
         self.model = None
@@ -412,7 +416,7 @@ class VehicleDetectionPipeline():
         for pixels in range(32, 256, 32):
             scale = pixels/float(256.0)
             yboundary = [360, np.max([np.int(360 + 360*scale)])]
-            if pixels < 96:
+            if pixels < 64:
                 overlap = (0,0)
             else:
                 overlap = (0.5, 0.5)

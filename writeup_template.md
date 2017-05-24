@@ -79,7 +79,6 @@ I also tried tracking the boxes , however I have implemented very basic tracking
 
 ###Discussion
 
-####1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
+#### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
-Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
-
+I think this can be improved radically by using tracking pipeline properly and also chosing sliding windows efficiently. We could track direction and speed in tracking vehicle. Also using that information we can chose sliding windows more efficiently. Also current implementation relies on RGB color space and may be some other colorspace would give a better output. Other issue I see is slope on the road. If slope is there I can not keep the scanning window logic limited to 360-720 it needs to change with slope.

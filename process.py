@@ -16,7 +16,7 @@ video_file = args.video
 
 # create pipeline
 classifier = VehicleDetectionClassifier()
-vehicle_detect = VehicleDetectionPipeline(classifier,tracking_frames=10)
+vehicle_detect = VehicleDetectionPipeline(classifier,tracking_frames=8)
 # read a video
 cap = cv2.VideoCapture(video_file)
 i = 0
