@@ -44,8 +44,11 @@ def _bin_spatial(img, color_space=None, size=(32, 32)):
     # Return the feature vector
     return features
 
-def _get_hog_features(img, orient=9, pix_per_cell=8, cell_per_block=2, vis=False, feature_vec=True):
+def _get_hog_features(img, orient=9, pix_per_cell=8, cell_per_block=2, vis=False, feature_vec=True, debug=False):
     img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    if vis is False:
+        vis = debug
+
     if vis == True:
         features, hog_image = hog(img, \
             orientations=orient, \
@@ -53,7 +56,11 @@ def _get_hog_features(img, orient=9, pix_per_cell=8, cell_per_block=2, vis=False
             cells_per_block=(cell_per_block, cell_per_block), \
             visualise=True, \
             feature_vector=False)
-        return features.ravel(), hog_image
+        if debug is True:
+            plt.imshow(hog_image, cmap='gray')
+            plt.title('hog image')
+            plt.show()
+        return features.ravel()
     else:
         features = hog(img, \
             orientations=orient, \
@@ -80,34 +87,40 @@ class VehicleDetectionClassifier():
         self.X_scaler = StandardScaler()
         return self.X_scaler.fit(feats)
 
-    def _extract_features(self, imgs):
+    def _extract_features(self, imgs, debug=False):
         """ extract features from list of string or list of images in RGB color space"""
         feats = []
         for img in imgs:
             if type(img) == str:
                 if img.endswith("png") is True:
-                    img = mpimg.imread(img)*255.0
+                    title = img
+                    img = mpimg.imread(img)
+                    if debug is True:
+                        plt.imshow(img)
+                        plt.title(title)
+                        plt.show()
+                    img = img*255.0
                 else:
                     img = mpimg.imread(img)
             spatfeats = _bin_spatial(img)
             histfeats = _color_hist(img)
-            hogfeats = _get_hog_features(img)
-            feat = np.concatenate((spatfeats, histfeats, hogfeats))
+            hogfeats = _get_hog_features(img, debug=debug)
+            feat = np.concatenate((spatfeats, histfeats, hogfeats), axis=0)
             feats.append(feat)
-        return np.array(feats).astype(np.float64)
+        return np.array(feats, dtype=np.float64)
 
-    def extract_and_normalize_features(self, imgs):
+    def extract_and_normalize_features(self, imgs, debug=False):
         """ extract and normalize features """
-        feats = self._extract_features(imgs)
+        feats = self._extract_features(imgs, debug=debug)
         if self.X_scaler is None:
             self.X_scaler = self._get_feature_scaler(feats)
             self._save_scaler()
         scaled_feats = self.X_scaler.transform(feats)
         return scaled_feats
 
-    def predict(self, img):
+    def predict(self, img, debug=False):
         """ pass a 64x64 image and return True or False"""
-        feats = self.extract_and_normalize_features([img])
+        feats = self.extract_and_normalize_features([img], debug=debug)
         y = self.model.predict(feats)
         return y
 
@@ -211,6 +224,8 @@ class VehicleBox():
         # print(cur_position)
         templist = [(x, y, self.distance(x, cur_point=cur_position)) for x, y in zip(positions, sizes)]
         if len(templist) == 0:
+            self.positions.popleft()
+            self.sizes.popleft()
             return None
 
         minimum_dist = min(templist, key=lambda x: x[2])
@@ -257,13 +272,19 @@ class DetectedVehiclesTracker():
             positions.remove(pos)
             sizes.remove(size)
 
+        # create new detections
         for pos, size in zip(positions, sizes):
             self.vehicles.append(VehicleBox(self.tracking_frames, pos, size))
 
     def get_boxes(self):
+
+        # remove idle detections
         self.vehicles = [ x for x in self.vehicles if len(x.positions) > 0 ]
+
+        # fetch boxes for remaining detections
         boxes = [ x.get_box() for x in self.vehicles ]
-        # print(boxes)
+        
+        # filter to only active detections
         boxes = [ box[0] for box in boxes if box[1] is True ]
         return boxes
 
@@ -308,7 +329,7 @@ class VehicleDetectionPipeline():
         # Return the list of windows
         return window_list
     
-    def search_windows(self, img, windows):
+    def search_windows(self, img, windows, debug=False):
         #1) Create an empty list to receive positive detection windows
         on_windows = []
         #2) Iterate over all windows in the list
@@ -452,12 +473,24 @@ if __name__ == "__main__":
     parser.add_argument('--no-debug', dest='debug', action='store_false')
     parser.add_argument('--train', dest='model', action='store_true')
     parser.add_argument('--no-train', dest='model', action='store_false')
+    parser.add_argument('--save', dest='save', action='store_true')
     args = parser.parse_args()
     debug = args.debug
     model_train = args.model
     save_output_dir = args.output_dir
+    save = args.save
+
+
     # print(model_train)
     classifier = VehicleDetectionClassifier(force=model_train)
+    if args.save is True:
+        vehicles = glob.glob("../../vehicles/*/*png")
+        nonvehicles = glob.glob("../../non-vehicles/*/*png")
+        classifier.extract_and_normalize_features(vehicles[10:11], debug=True)
+        classifier.extract_and_normalize_features(nonvehicles[10:11], debug=True)
+        os.Exit(0)
+        
+
     if model_train is True:
         vehicles = glob.glob("../../vehicles/*/*png")
         nonvehicles = glob.glob("../../non-vehicles/*/*png")

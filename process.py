@@ -16,13 +16,12 @@ video_file = args.video
 
 # create pipeline
 classifier = VehicleDetectionClassifier()
-vehicle_detect = VehicleDetectionPipeline(classifier,tracking_frames=6)
+vehicle_detect = VehicleDetectionPipeline(classifier,tracking_frames=10)
 # read a video
 cap = cv2.VideoCapture(video_file)
 i = 0
 while(cap.isOpened()):
     ret, frame = cap.read()
-    print(frame.shape)
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     outframe = vehicle_detect.run(frame, debug=debug)
     outframe = cv2.cvtColor(outframe, cv2.COLOR_RGB2BGR)
